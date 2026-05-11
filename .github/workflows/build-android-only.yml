@@ -1,0 +1,94 @@
+name: Build Android Only
+
+on:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.38.5'
+  CHANNEL: 'dev'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2.21.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+      
+      - name: Verify Flutter
+        run: |
+          flutter --version
+          flutter doctor -v
+      
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Install Fastforge
+        run: |
+          dart pub global activate fastforge
+          echo "$HOME/.pub-cache/bin" >> $GITHUB_PATH
+      
+      - name: Flutter Pub Get
+        run: flutter pub get
+      
+      - name: Generate Code (build_runner)
+        run: dart run build_runner build --delete-conflicting-outputs
+        continue-on-error: true
+      
+      - name: Generate Translations (slang)
+        run: dart run slang
+        continue-on-error: true
+      
+      - name: Download Hiddify Core Lib (Android)
+        run: |
+          mkdir -p android/app/libs
+          echo "Attempting to download hiddify-lib-android.tar.gz from draft release..."
+          curl -fL https://github.com/hiddify/hiddify-next-core/releases/download/draft/hiddify-lib-android.tar.gz -o /tmp/hiddify-lib-android.tar.gz || \
+          curl -fL https://github.com/hiddify/hiddify-next-core/releases/latest/download/hiddify-lib-android.tar.gz -o /tmp/hiddify-lib-android.tar.gz
+          tar xzf /tmp/hiddify-lib-android.tar.gz -C android/app/libs/
+          ls -la android/app/libs/
+      
+      - name: Build APK (Debug, Universal)
+        env:
+          SENTRY_DSN: ""
+        run: |
+          flutter build apk --debug --target=lib/main.dart --dart-define=sentry_dsn=""
+      
+      - name: List Build Outputs
+        if: always()
+        run: |
+          ls -la build/app/outputs/flutter-apk/ || echo "No APK outputs"
+      
+      - name: Upload APK Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LetusVPN-debug-apk
+          path: build/app/outputs/flutter-apk/*.apk
+          retention-days: 7
+      
+      - name: Upload Build Logs (if failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build/
+            .dart_tool/
+          retention-days: 3
